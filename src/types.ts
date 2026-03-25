@@ -72,6 +72,14 @@ export interface ImportRecord {
   parseQuality: "full" | "partial";
 }
 
+export interface ImportPreview {
+  altData: AltNoteData;
+  pdfData: ArrayBuffer | null;
+  slideThumbnails: string[]; // data URLs for thumbnails
+  suggestedSubject: string;
+  slideCount: number;
+}
+
 export interface PluginData {
   settings: Alt2ObsidianSettings;
   recentImports: ImportRecord[];

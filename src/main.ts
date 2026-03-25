@@ -3,6 +3,7 @@ import {
   PluginData,
   DEFAULT_PLUGIN_DATA,
   ImportRecord,
+  ImportPreview,
   LLMProvider as ILLMProvider,
 } from "./types";
 import { AltScraper } from "./scraper/AltScraper";
@@ -75,8 +76,62 @@ export default class Alt2ObsidianPlugin extends Plugin {
     this.vaultManager?.setBasePath(this.data.settings.baseFolderPath);
   }
 
+  /**
+   * Phase 1: Preview — scrape page, download PDF, render thumbnails.
+   * Returns preview data for the user to select slides before import.
+   */
+  async previewImport(
+    url: string,
+    onProgress?: (stage: string, percent: number) => void
+  ): Promise<ImportPreview> {
+    onProgress?.("Alt 노트 페이지 가져오는 중...", 10);
+    const altData = await this.scraper.fetch(url);
+    onProgress?.("Alt 노트 파싱 완료", 30);
+
+    let pdfData: ArrayBuffer | null = null;
+    const slideThumbnails: string[] = [];
+
+    if (altData.pdfUrl && this.pdfProcessor) {
+      onProgress?.("PDF 다운로드 중...", 40);
+      try {
+        pdfData = await this.pdfProcessor.downloadPdf(altData.pdfUrl);
+        onProgress?.("슬라이드 미리보기 생성 중...", 55);
+
+        this.pdfProcessor.initWorker();
+        const thumbs = await this.pdfProcessor.renderThumbnails(pdfData, (p, t) => {
+          onProgress?.(`미리보기 생성 (${p}/${t})...`, 55 + Math.floor((p / t) * 40));
+        });
+        slideThumbnails.push(...thumbs);
+      } catch (e) {
+        console.warn("[Alt2Obsidian] PDF preview failed:", e);
+      }
+    }
+
+    // Quick subject detection from title
+    const codeMatch = altData.title.match(/([A-Z]{2,}[\s-]?\d{2,})/i);
+    const suggestedSubject = codeMatch
+      ? codeMatch[1].replace(/\s+/g, "").toUpperCase()
+      : altData.title.split(/[\s-_]/)[0];
+
+    onProgress?.("미리보기 준비 완료", 100);
+
+    return {
+      altData,
+      pdfData,
+      slideThumbnails,
+      suggestedSubject,
+      slideCount: slideThumbnails.length,
+    };
+  }
+
+  /**
+   * Phase 2: Import — process with LLM and save to vault.
+   * Takes preview data + user's slide selection.
+   */
   async importNote(
     url: string,
+    preview: ImportPreview,
+    selectedSlides: number[], // 0-based indices of selected slides
     subjectOverride?: string,
     onProgress?: (stage: string, percent: number) => void
   ): Promise<ImportRecord> {
@@ -92,11 +147,7 @@ export default class Alt2ObsidianPlugin extends Plugin {
       settings.rateDelayMs
     );
 
-    onProgress?.("Alt 노트 페이지 가져오는 중...", 10);
-
-    // Step 1: Fetch and parse Alt page
-    const altData = await this.scraper.fetch(url);
-    onProgress?.("Alt 노트 파싱 완료", 20);
+    const altData = preview.altData;
 
     // For partial quality, skip LLM processing
     if (altData.parseQuality === "partial") {
@@ -110,8 +161,7 @@ export default class Alt2ObsidianPlugin extends Plugin {
       const summaryTooShort = !altData.summary || altData.summary.length < 500;
 
       if (summaryTooShort) {
-        // No usable summary → generate from transcript
-        onProgress?.("트랜스크립트에서 강의 노트 생성 중...", 25);
+        onProgress?.("트랜스크립트에서 강의 노트 생성 중...", 10);
         const memoContext = altData.summary
           ? `\n\n[학생 메모]\n${altData.summary}`
           : "";
@@ -135,8 +185,7 @@ ${transcriptText}`,
           }
         );
       } else {
-        // Summary exists → enhance with transcript details
-        onProgress?.("트랜스크립트로 요약 보강 중...", 25);
+        onProgress?.("트랜스크립트로 요약 보강 중...", 10);
 
         altData.summary = await llm.generateText(
           `다음은 강의 요약본과 실제 강의 트랜스크립트입니다.
@@ -155,54 +204,42 @@ ${altData.summary}
 [강의 트랜스크립트]
 ${transcriptText}`,
           {
-            systemPrompt: "You are an academic note-taking assistant. Enhance lecture summaries with additional details from transcripts. Keep the original structure but add missing explanations, examples, and context.",
+            systemPrompt: "You are an academic note-taking assistant. Enhance lecture summaries with additional details from transcripts.",
             maxOutputTokens: 8192,
           }
         );
       }
     }
 
-    // Step 2: Start PDF download + LLM processing in PARALLEL
-    const pdfPromise =
-      altData.pdfUrl && this.pdfProcessor
-        ? this.pdfProcessor.downloadPdf(altData.pdfUrl).catch((e) => {
-            console.warn("[Alt2Obsidian] PDF download failed:", e);
-            return null;
-          })
-        : Promise.resolve(null);
-
     onProgress?.("LLM으로 개념 추출 중...", 30);
 
     // LLM: Extract concepts + detect subject
     const conceptExtractor = new ConceptExtractor(llm);
-    const subjectPromise = subjectOverride
-      ? Promise.resolve(subjectOverride)
-      : this.detectSubject(llm, altData.title, altData.summary);
+    const subject = subjectOverride || preview.suggestedSubject;
 
-    const [pdfData, conceptResult, subject] = await Promise.all([
-      pdfPromise,
-      conceptExtractor.extract(altData.summary, subjectOverride || altData.title),
-      subjectPromise,
-    ]);
+    const conceptResult = await conceptExtractor.extract(
+      altData.summary,
+      subject
+    );
 
     onProgress?.("개념 추출 완료", 50);
 
-    // Step 3: Render PDF pages to images (if PDF available)
+    // Render only SELECTED slides to full images
     let images: import("./types").SlideImage[] = [];
-    if (pdfData && this.pdfProcessor) {
-      onProgress?.("슬라이드 이미지 변환 중...", 55);
+    if (preview.pdfData && this.pdfProcessor && selectedSlides.length > 0) {
+      onProgress?.("선택된 슬라이드 변환 중...", 55);
       const titleSlug = sanitizeFilename(altData.title)
         .replace(/\s+/g, "_")
         .toLowerCase();
 
       try {
-        this.pdfProcessor.initWorker();
-        images = await this.pdfProcessor.renderPages(
-          pdfData,
+        images = await this.pdfProcessor.renderSelectedPages(
+          preview.pdfData,
+          selectedSlides,
           titleSlug,
           (page, total) => {
             const pct = 55 + Math.floor((page / total) * 20);
-            onProgress?.(`슬라이드 변환 중 (${page}/${total})...`, pct);
+            onProgress?.(`슬라이드 변환 (${page}/${total})...`, pct);
           }
         );
       } catch (e) {
@@ -212,7 +249,7 @@ ${transcriptText}`,
 
     onProgress?.("이미지 배치 결정 중...", 75);
 
-    // Step 4: Get image placements from LLM
+    // Get image placements from LLM
     const noteGenerator = new NoteGenerator(llm);
     const imagePlacements =
       images.length > 0
@@ -221,7 +258,7 @@ ${transcriptText}`,
             .catch(() => [])
         : [];
 
-    // Step 5: Generate markdown
+    // Generate markdown
     onProgress?.("마크다운 노트 생성 중...", 80);
 
     const llmResult = {
@@ -239,29 +276,24 @@ ${transcriptText}`,
       subject
     );
 
-    // Step 6: Save everything to vault
+    // Save everything to vault
     onProgress?.("Vault에 저장 중...", 90);
 
     const vm = this.vaultManager!;
     const subjectFolder = `${vm.getBasePath()}/${sanitizeFilename(subject)}`;
     const assetsFolder = `${subjectFolder}/assets`;
 
-    // Save images
     for (const img of images) {
       await vm.saveImage(img, assetsFolder);
     }
 
-    // Save lecture note
     const noteFilename = sanitizeFilename(altData.title);
     const notePath = `${subjectFolder}/${noteFilename}.md`;
     await vm.saveNote(lectureMarkdown, notePath);
-
-    // Save concept notes
     await vm.saveConceptNotes(conceptNotes, noteFilename);
 
     onProgress?.("완료!", 100);
 
-    // Persist import record
     const record: ImportRecord = {
       url,
       title: altData.title,
