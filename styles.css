@@ -1,0 +1,228 @@
+/* Alt2Obsidian Sidebar Styles */
+
+.alt2obsidian-sidebar {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* URL Input Section */
+.alt2obsidian-input-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alt2obsidian-input-section input[type="text"] {
+  width: 100%;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.alt2obsidian-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.alt2obsidian-input-row input {
+  flex: 1;
+}
+
+.alt2obsidian-subject-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.alt2obsidian-subject-input label {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+/* Import Button */
+.alt2obsidian-import-btn {
+  cursor: pointer;
+}
+
+.alt2obsidian-import-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Progress */
+.alt2obsidian-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.alt2obsidian-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.alt2obsidian-progress-bar-fill {
+  height: 100%;
+  background: var(--interactive-accent);
+  transition: width 0.3s ease;
+}
+
+.alt2obsidian-progress-text {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+/* Section Headers */
+.alt2obsidian-section-header {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* Recent Imports List */
+.alt2obsidian-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.alt2obsidian-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.alt2obsidian-recent-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.alt2obsidian-recent-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alt2obsidian-recent-item-subject {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  background: var(--background-modifier-border);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.alt2obsidian-recent-item-partial {
+  font-size: 0.75em;
+  color: var(--text-warning);
+}
+
+/* Exam Summary Section */
+.alt2obsidian-exam-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alt2obsidian-exam-subject {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--background-secondary);
+}
+
+.alt2obsidian-exam-subject-name {
+  font-weight: 500;
+}
+
+.alt2obsidian-exam-subject-count {
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+.alt2obsidian-exam-btn {
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+/* Error Messages */
+.alt2obsidian-error {
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(220, 53, 69, 0.15);
+  color: var(--text-normal);
+  border: 1px solid rgba(220, 53, 69, 0.5);
+  font-size: 0.85em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alt2obsidian-error-retry {
+  cursor: pointer;
+  text-decoration: underline;
+  margin-left: auto;
+}
+
+/* Success Message */
+.alt2obsidian-success {
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(40, 167, 69, 0.15);
+  color: var(--text-normal);
+  border: 1px solid rgba(40, 167, 69, 0.5);
+  font-size: 0.85em;
+}
+
+/* Subject Chips */
+.alt2obsidian-subject-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.alt2obsidian-subject-chip {
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+  font-size: 0.8em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.alt2obsidian-subject-chip:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.alt2obsidian-subject-chip.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* Empty State */
+.alt2obsidian-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  padding: 16px 0;
+}

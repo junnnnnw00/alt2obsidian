@@ -1,0 +1,358 @@
+import { ItemView, WorkspaceLeaf } from "obsidian";
+import type Alt2ObsidianPlugin from "../main";
+
+export const VIEW_TYPE_SIDEBAR = "alt2obsidian-sidebar";
+
+export class Alt2ObsidianSidebarView extends ItemView {
+  private plugin: Alt2ObsidianPlugin;
+  private urlInput: HTMLInputElement | null = null;
+  private subjectInput: HTMLInputElement | null = null;
+  private importBtn: HTMLButtonElement | null = null;
+  private progressContainer: HTMLElement | null = null;
+  private progressBar: HTMLElement | null = null;
+  private progressText: HTMLElement | null = null;
+  private messageContainer: HTMLElement | null = null;
+  private recentListContainer: HTMLElement | null = null;
+  private examContainer: HTMLElement | null = null;
+
+  constructor(leaf: WorkspaceLeaf, plugin: Alt2ObsidianPlugin) {
+    super(leaf);
+    this.plugin = plugin;
+  }
+
+  getViewType(): string {
+    return VIEW_TYPE_SIDEBAR;
+  }
+
+  getDisplayText(): string {
+    return "Alt2Obsidian";
+  }
+
+  getIcon(): string {
+    return "book-open";
+  }
+
+  async onOpen(): Promise<void> {
+    const container = this.containerEl.children[1];
+    container.empty();
+    container.addClass("alt2obsidian-sidebar");
+
+    this.renderInputSection(container);
+    this.renderProgressSection(container);
+    this.renderMessageSection(container);
+    this.renderRecentSection(container);
+    this.renderExamSection(container);
+  }
+
+  private renderInputSection(container: Element): void {
+    const section = container.createDiv({ cls: "alt2obsidian-input-section" });
+
+    // URL input row
+    const urlRow = section.createDiv({ cls: "alt2obsidian-input-row" });
+    this.urlInput = urlRow.createEl("input", {
+      type: "text",
+      placeholder: "Alt 노트 URL 붙여넣기...",
+    });
+
+    this.importBtn = urlRow.createEl("button", {
+      text: "가져오기",
+      cls: "alt2obsidian-import-btn mod-cta",
+    });
+    this.importBtn.addEventListener("click", () => this.handleImport());
+
+    // Subject section
+    const subjectRow = section.createDiv({ cls: "alt2obsidian-subject-input" });
+    subjectRow.createEl("label", { text: "과목명" });
+
+    // Show existing subjects as clickable chips
+    const subjects = this.plugin.vaultManager?.getKnownSubjects() || [];
+    if (subjects.length > 0) {
+      const chipsContainer = subjectRow.createDiv({ cls: "alt2obsidian-subject-chips" });
+      for (const s of subjects) {
+        const chip = chipsContainer.createEl("span", {
+          text: s,
+          cls: "alt2obsidian-subject-chip",
+        });
+        chip.addEventListener("click", () => {
+          if (this.subjectInput) this.subjectInput.value = s;
+          // Toggle active state
+          chipsContainer.querySelectorAll(".alt2obsidian-subject-chip").forEach(
+            (c) => c.removeClass("is-active")
+          );
+          chip.addClass("is-active");
+        });
+      }
+    }
+
+    this.subjectInput = subjectRow.createEl("input", {
+      type: "text",
+      placeholder: subjects.length > 0
+        ? "위에서 선택하거나 새 과목명 입력..."
+        : "과목명 입력 (예: CSED311)",
+    });
+  }
+
+  private renderProgressSection(container: Element): void {
+    this.progressContainer = container.createDiv({
+      cls: "alt2obsidian-progress",
+    });
+    this.progressContainer.hide();
+
+    const barOuter = this.progressContainer.createDiv({
+      cls: "alt2obsidian-progress-bar",
+    });
+    this.progressBar = barOuter.createDiv({
+      cls: "alt2obsidian-progress-bar-fill",
+    });
+    this.progressText = this.progressContainer.createDiv({
+      cls: "alt2obsidian-progress-text",
+    });
+  }
+
+  private renderMessageSection(container: Element): void {
+    this.messageContainer = container.createDiv();
+  }
+
+  private renderRecentSection(container: Element): void {
+    container.createEl("h6", {
+      text: "최근 가져온 노트",
+      cls: "alt2obsidian-section-header",
+    });
+
+    this.recentListContainer = container.createDiv({
+      cls: "alt2obsidian-recent-list",
+    });
+    this.refreshRecentList();
+  }
+
+  private renderExamSection(container: Element): void {
+    container.createEl("h6", {
+      text: "시험요약본",
+      cls: "alt2obsidian-section-header",
+    });
+
+    this.examContainer = container.createDiv({
+      cls: "alt2obsidian-exam-section",
+    });
+    this.refreshExamSection();
+  }
+
+  refreshRecentList(): void {
+    if (!this.recentListContainer) return;
+    this.recentListContainer.empty();
+
+    const imports = this.plugin.data.recentImports;
+
+    if (imports.length === 0) {
+      this.recentListContainer.createDiv({
+        text: "아직 가져온 노트가 없습니다",
+        cls: "alt2obsidian-empty",
+      });
+      return;
+    }
+
+    for (const record of imports.slice(0, 20)) {
+      const item = this.recentListContainer.createDiv({
+        cls: "alt2obsidian-recent-item",
+      });
+
+      item.createSpan({
+        text: record.title,
+        cls: "alt2obsidian-recent-item-title",
+      });
+      item.createSpan({
+        text: record.subject,
+        cls: "alt2obsidian-recent-item-subject",
+      });
+
+      if (record.parseQuality === "partial") {
+        item.createSpan({
+          text: "⚠",
+          cls: "alt2obsidian-recent-item-partial",
+          attr: { title: "Partial import" },
+        });
+      }
+
+      item.addEventListener("click", () => {
+        const file = this.app.vault.getAbstractFileByPath(record.path);
+        if (file) {
+          this.app.workspace.openLinkText(record.path, "", false);
+        }
+      });
+    }
+  }
+
+  refreshExamSection(): void {
+    if (!this.examContainer) return;
+    this.examContainer.empty();
+
+    // Group recent imports by subject
+    const subjectMap = new Map<string, number>();
+    for (const record of this.plugin.data.recentImports) {
+      const count = subjectMap.get(record.subject) || 0;
+      subjectMap.set(record.subject, count + 1);
+    }
+
+    if (subjectMap.size === 0) {
+      this.examContainer.createDiv({
+        text: "노트를 가져온 후 시험요약본을 생성할 수 있습니다",
+        cls: "alt2obsidian-empty",
+      });
+      return;
+    }
+
+    for (const [subject, count] of subjectMap) {
+      const row = this.examContainer.createDiv({
+        cls: "alt2obsidian-exam-subject",
+      });
+
+      const info = row.createDiv();
+      info.createSpan({
+        text: subject,
+        cls: "alt2obsidian-exam-subject-name",
+      });
+      info.createSpan({
+        text: ` (${count}강의)`,
+        cls: "alt2obsidian-exam-subject-count",
+      });
+
+      const btn = row.createEl("button", {
+        text: "시험요약본 생성",
+        cls: "alt2obsidian-exam-btn",
+      });
+      btn.addEventListener("click", () =>
+        this.handleExamSummary(subject)
+      );
+    }
+  }
+
+  private async handleImport(): Promise<void> {
+    const url = this.urlInput?.value?.trim();
+    if (!url) {
+      this.showError("URL을 입력해주세요");
+      return;
+    }
+
+    if (!this.plugin.data.settings.apiKey) {
+      this.showError("API 키를 설정에서 입력해주세요");
+      return;
+    }
+
+    this.setLoading(true);
+    this.clearMessage();
+
+    try {
+      this.updateProgress(0, "Alt 노트 가져오는 중...");
+
+      const result = await this.plugin.importNote(
+        url,
+        this.subjectInput?.value?.trim() || undefined,
+        (stage, progress) => {
+          this.updateProgress(progress, stage);
+        }
+      );
+
+      this.hideProgress();
+      this.showSuccess(
+        `"${result.title}" → ${result.subject} 가져오기 완료!`
+      );
+
+      if (this.urlInput) this.urlInput.value = "";
+      if (this.subjectInput) this.subjectInput.value = "";
+      // Deselect any active chip
+      this.containerEl.querySelectorAll(".alt2obsidian-subject-chip").forEach(
+        (c) => c.removeClass("is-active")
+      );
+
+      this.refreshRecentList();
+      this.refreshExamSection();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "알 수 없는 오류";
+      this.showError(msg);
+    } finally {
+      this.setLoading(false);
+    }
+  }
+
+  private async handleExamSummary(subject: string): Promise<void> {
+    if (!this.plugin.data.settings.apiKey) {
+      this.showError("API 키를 설정에서 입력해주세요");
+      return;
+    }
+
+    this.clearMessage();
+    this.updateProgress(0, `${subject} 시험요약본 생성 중...`);
+
+    try {
+      const path = await this.plugin.generateExamSummary(subject);
+      this.showSuccess(`시험요약본 생성 완료!`);
+      this.hideProgress();
+
+      // Open the generated file
+      this.app.workspace.openLinkText(path, "", false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "알 수 없는 오류";
+      this.showError(msg);
+      this.hideProgress();
+    }
+  }
+
+  private setLoading(loading: boolean): void {
+    if (this.importBtn) {
+      this.importBtn.disabled = loading;
+      this.importBtn.textContent = loading ? "가져오는 중..." : "가져오기";
+    }
+    if (loading) {
+      this.progressContainer?.show();
+    }
+  }
+
+  private updateProgress(percent: number, text: string): void {
+    this.progressContainer?.show();
+    if (this.progressBar) {
+      this.progressBar.style.width = `${Math.min(100, percent)}%`;
+    }
+    if (this.progressText) {
+      this.progressText.textContent = text;
+    }
+  }
+
+  private hideProgress(): void {
+    this.progressContainer?.hide();
+  }
+
+  private showError(msg: string): void {
+    if (!this.messageContainer) return;
+    this.messageContainer.empty();
+    this.hideProgress();
+
+    const el = this.messageContainer.createDiv({ cls: "alt2obsidian-error" });
+    el.createSpan({ text: msg });
+
+    const retry = el.createSpan({
+      text: "다시 시도",
+      cls: "alt2obsidian-error-retry",
+    });
+    retry.addEventListener("click", () => {
+      this.clearMessage();
+      this.handleImport();
+    });
+  }
+
+  private showSuccess(msg: string): void {
+    if (!this.messageContainer) return;
+    this.messageContainer.empty();
+    this.messageContainer.createDiv({
+      text: msg,
+      cls: "alt2obsidian-success",
+    });
+  }
+
+  private clearMessage(): void {
+    this.messageContainer?.empty();
+  }
+
+  async onClose(): Promise<void> {
+    // Cleanup
+  }
+}

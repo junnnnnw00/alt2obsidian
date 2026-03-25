@@ -1,0 +1,15 @@
+# Build output
+main.js
+pdf.worker.min.mjs
+
+# Dependencies
+node_modules/
+
+# Obsidian plugin data
+data.json
+
+# OS
+.DS_Store
+
+# OMC state
+.omc/
