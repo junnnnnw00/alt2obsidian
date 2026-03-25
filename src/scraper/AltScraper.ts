@@ -40,13 +40,14 @@ export class AltScraper {
     // Prefer OG title, strip " | Alt" suffix
     const title = ogTitle || rscResult.title || `Alt Note ${noteId}`;
 
-    // Determine best available content: summary > transcript
-    const hasContent = rscResult.summary || rscResult.transcript;
+    // Determine best available content: summary > memo > transcript
+    const bestSummary = rscResult.summary || rscResult.memo || "";
+    const hasContent = bestSummary || rscResult.transcript;
 
     if (hasContent) {
       return {
         title,
-        summary: rscResult.summary || "", // may be empty if transcript-only
+        summary: bestSummary,
         pdfUrl: rscResult.pdfUrl,
         transcript: rscResult.transcript,
         metadata: {
@@ -54,8 +55,7 @@ export class AltScraper {
           createdAt: rscResult.createdAt,
           visibility: null,
         },
-        // Full if we have summary; transcript-only is still usable (LLM will summarize)
-        parseQuality: rscResult.summary ? "full" : "full",
+        parseQuality: "full",
       };
     }
 

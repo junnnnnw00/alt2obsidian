@@ -104,19 +104,30 @@ export default class Alt2ObsidianPlugin extends Plugin {
       return this.savePartialNote(altData, subject, url, llm, onProgress);
     }
 
-    // If no summary but transcript available, use LLM to generate summary
-    if (!altData.summary && altData.transcript) {
-      onProgress?.("트랜스크립트에서 요약 생성 중...", 25);
-      const transcriptText = altData.transcript.slice(0, 15000); // limit for token budget
+    // If transcript available and summary is short/missing, use LLM to generate proper summary
+    const summaryTooShort = !altData.summary || altData.summary.length < 500;
+    if (summaryTooShort && altData.transcript) {
+      onProgress?.("트랜스크립트에서 강의 노트 생성 중...", 25);
+      const transcriptText = altData.transcript.slice(0, 15000);
+      const memoContext = altData.summary
+        ? `\n\n[학생 메모]\n${altData.summary}`
+        : "";
+
       altData.summary = await llm.generateText(
         `다음은 강의 트랜스크립트입니다. 이 내용을 구조화된 강의 노트로 정리해주세요.
-마크다운 형식으로, ## 섹션 헤더를 사용하고, 핵심 개념을 **볼드**로 표시해주세요.
-한국어로 작성하되, 전문 용어는 영어 병기해주세요.
+
+규칙:
+- 마크다운 형식으로, ## 섹션 헤더를 사용
+- 핵심 개념을 **볼드**로 표시
+- 한국어로 작성하되, 전문 용어는 영어 병기 (예: **파이프라인 해저드(Pipeline Hazard)**)
+- 각 섹션에 핵심 포인트를 불릿 리스트로 정리
+- 수식이나 예시가 있으면 포함
+${memoContext}
 
 트랜스크립트:
 ${transcriptText}`,
         {
-          systemPrompt: "You are an academic note-taking assistant. Create well-structured lecture notes in Korean with markdown formatting.",
+          systemPrompt: "You are an academic note-taking assistant. Create well-structured, comprehensive lecture notes in Korean with markdown formatting. Focus on key concepts, definitions, and relationships.",
           maxOutputTokens: 4096,
         }
       );
