@@ -66,15 +66,27 @@ export class RscParser {
       }
     }
 
-    // Extract summary: look for long markdown-like strings with ## headers
+    // Extract summary: look for long markdown-like strings
     const markdownCandidates = this.extractLongStrings(fullPayload);
     for (const candidate of markdownCandidates) {
+      // Primary: markdown with headers/bold (summary type)
       if (
         candidate.length > 200 &&
         (candidate.includes("##") || candidate.includes("**"))
       ) {
         if (!summary || candidate.length > summary.length) {
           summary = candidate;
+        }
+      }
+    }
+
+    // Fallback: any long text content without markdown (memo type)
+    if (!summary) {
+      for (const candidate of markdownCandidates) {
+        if (candidate.length > 100 && !candidate.includes("{") && !candidate.includes("<")) {
+          if (!summary || candidate.length > summary.length) {
+            summary = candidate;
+          }
         }
       }
     }

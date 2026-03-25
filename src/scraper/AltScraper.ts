@@ -36,17 +36,17 @@ export class AltScraper {
       ? metaResult.title.replace(/\s*\|\s*Alt$/, "").trim()
       : null;
 
-    if (rscResult.summary) {
-      // Full parse success (summary is the critical field; title can come from OG)
-      const noteId =
-        rscResult.noteId || this.extractNoteIdFromUrl(url);
-      // Prefer OG title (original Alt lecture title like "CSED311 Lec7-pipelined-CPU")
-      // over RSC-extracted heading (which is often the summary's first heading like "파이프라인 CPU 설계 개요")
-      const title = ogTitle || rscResult.title || `Alt Note ${noteId}`;
+    const noteId = rscResult.noteId || this.extractNoteIdFromUrl(url);
+    // Prefer OG title, strip " | Alt" suffix
+    const title = ogTitle || rscResult.title || `Alt Note ${noteId}`;
 
+    // Determine best available content: summary > transcript
+    const hasContent = rscResult.summary || rscResult.transcript;
+
+    if (hasContent) {
       return {
         title,
-        summary: rscResult.summary,
+        summary: rscResult.summary || "", // may be empty if transcript-only
         pdfUrl: rscResult.pdfUrl,
         transcript: rscResult.transcript,
         metadata: {
@@ -54,7 +54,8 @@ export class AltScraper {
           createdAt: rscResult.createdAt,
           visibility: null,
         },
-        parseQuality: "full",
+        // Full if we have summary; transcript-only is still usable (LLM will summarize)
+        parseQuality: rscResult.summary ? "full" : "full",
       };
     }
 
@@ -62,7 +63,6 @@ export class AltScraper {
     console.warn(
       "[Alt2Obsidian] RSC parse incomplete, falling back to OG meta tags"
     );
-    const noteId = this.extractNoteIdFromUrl(url);
 
     if (!metaResult.title && !metaResult.summary) {
       throw new Error(

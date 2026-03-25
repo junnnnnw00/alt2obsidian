@@ -104,6 +104,24 @@ export default class Alt2ObsidianPlugin extends Plugin {
       return this.savePartialNote(altData, subject, url, llm, onProgress);
     }
 
+    // If no summary but transcript available, use LLM to generate summary
+    if (!altData.summary && altData.transcript) {
+      onProgress?.("트랜스크립트에서 요약 생성 중...", 25);
+      const transcriptText = altData.transcript.slice(0, 15000); // limit for token budget
+      altData.summary = await llm.generateText(
+        `다음은 강의 트랜스크립트입니다. 이 내용을 구조화된 강의 노트로 정리해주세요.
+마크다운 형식으로, ## 섹션 헤더를 사용하고, 핵심 개념을 **볼드**로 표시해주세요.
+한국어로 작성하되, 전문 용어는 영어 병기해주세요.
+
+트랜스크립트:
+${transcriptText}`,
+        {
+          systemPrompt: "You are an academic note-taking assistant. Create well-structured lecture notes in Korean with markdown formatting.",
+          maxOutputTokens: 4096,
+        }
+      );
+    }
+
     // Step 2: Start PDF download + LLM processing in PARALLEL
     const pdfPromise =
       altData.pdfUrl && this.pdfProcessor
