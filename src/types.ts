@@ -44,6 +44,9 @@ export interface ConceptData {
   name: string;
   definition: string;
   relatedConcepts: string[];
+  example?: string;
+  caution?: string;
+  lectureContext?: string;
 }
 
 export interface ConceptNote {
@@ -51,6 +54,18 @@ export interface ConceptNote {
   definition: string;
   relatedLectures: string[];
   relatedConcepts: string[];
+  example?: string;
+  caution?: string;
+  lectureContext?: string;
+}
+
+export interface ImportUpdateSummary {
+  isUpdate: boolean;
+  addedSections: string[];
+  removedSections: string[];
+  addedConcepts: string[];
+  removedConcepts: string[];
+  changedLineCount: number;
 }
 
 export interface ImportRecord {
@@ -64,11 +79,13 @@ export interface ImportRecord {
   examPeriod?: ExamPeriod;
   pdfPath?: string;
   wasUpdate?: boolean;
+  updateSummary?: ImportUpdateSummary;
 }
 
 export interface ImportPreview {
   altData: AltNoteData;
   pdfData: ArrayBuffer | null;
+  pdfUrl?: string | null;
   suggestedSubject: string;
 }
 

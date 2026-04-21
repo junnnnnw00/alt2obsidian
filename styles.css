@@ -125,6 +125,19 @@
   border-radius: 3px;
 }
 
+.alt2obsidian-recent-item-date {
+  font-size: 0.75em;
+  color: var(--text-faint);
+}
+
+.alt2obsidian-recent-item-updated {
+  font-size: 0.75em;
+  color: var(--text-accent);
+  background: var(--background-modifier-border);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
 .alt2obsidian-recent-item-partial {
   font-size: 0.75em;
   color: var(--text-warning);
@@ -256,4 +269,34 @@
   min-width: 50px;
   font-size: 12px;
   padding: 4px 8px;
+}
+
+.alt2obsidian-update-modal h2 {
+  margin-top: 0;
+}
+
+.alt2obsidian-update-section {
+  margin-top: 12px;
+}
+
+.alt2obsidian-update-section h3 {
+  font-size: 0.9em;
+  margin-bottom: 4px;
+}
+
+.alt2obsidian-update-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.alt2obsidian-update-empty {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.alt2obsidian-update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }

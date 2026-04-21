@@ -7,6 +7,7 @@ import {
   LLMProvider as ILLMProvider,
   ExamPeriod,
   ConceptData,
+  ImportUpdateSummary,
 } from "./types";
 import { AltScraper } from "./scraper/AltScraper";
 import { PdfProcessor } from "./pdf/PdfProcessor";
@@ -79,7 +80,7 @@ export default class Alt2ObsidianPlugin extends Plugin {
   }
 
   /**
-   * Phase 1: Preview — scrape page and download the original PDF if available.
+   * Phase 1: Preview — scrape page and defer PDF download until import.
    */
   async previewImport(
     url: string,
@@ -88,17 +89,6 @@ export default class Alt2ObsidianPlugin extends Plugin {
     onProgress?.("Alt 노트 페이지 가져오는 중...", 10);
     const altData = await this.scraper.fetch(url);
     onProgress?.("Alt 노트 파싱 완료", 30);
-
-    let pdfData: ArrayBuffer | null = null;
-
-    if (altData.pdfUrl && this.pdfProcessor) {
-      onProgress?.("PDF 다운로드 중...", 40);
-      try {
-        pdfData = await this.pdfProcessor.downloadPdf(altData.pdfUrl);
-      } catch (e) {
-        console.warn("[Alt2Obsidian] PDF download failed:", e);
-      }
-    }
 
     // Quick subject detection from title
     const codeMatch = altData.title.match(/([A-Z]{2,}[\s-]?\d{2,})/i);
@@ -110,7 +100,8 @@ export default class Alt2ObsidianPlugin extends Plugin {
 
     return {
       altData,
-      pdfData,
+      pdfData: null,
+      pdfUrl: altData.pdfUrl,
       suggestedSubject,
     };
   }
@@ -123,7 +114,8 @@ export default class Alt2ObsidianPlugin extends Plugin {
     preview: ImportPreview,
     subjectOverride?: string,
     examPeriod?: ExamPeriod,
-    onProgress?: (stage: string, percent: number) => void
+    onProgress?: (stage: string, percent: number) => void,
+    onConfirmUpdate?: (summary: ImportUpdateSummary) => Promise<boolean>
   ): Promise<ImportRecord> {
     const settings = this.data.settings;
     if (!settings.apiKey) {
@@ -138,6 +130,7 @@ export default class Alt2ObsidianPlugin extends Plugin {
     );
 
     const altData = preview.altData;
+    const pdfDataPromise = this.downloadPdfForImport(preview);
 
     // For partial quality, skip LLM processing
     if (altData.parseQuality === "partial") {
@@ -147,8 +140,9 @@ export default class Alt2ObsidianPlugin extends Plugin {
         subject,
         url,
         llm,
-        preview.pdfData,
-        onProgress
+        pdfDataPromise,
+        onProgress,
+        onConfirmUpdate
       );
     }
 
@@ -156,6 +150,7 @@ export default class Alt2ObsidianPlugin extends Plugin {
     if (altData.transcript) {
       const transcriptText = altData.transcript.slice(0, 15000);
       const summaryTooShort = !altData.summary || altData.summary.length < 500;
+      const summaryAlreadyDetailed = altData.summary.length >= 2500;
 
       if (summaryTooShort) {
         onProgress?.("트랜스크립트에서 강의 노트 생성 중...", 10);
@@ -188,7 +183,7 @@ ${transcriptText}`,
             maxOutputTokens: 4096,
           }
         );
-      } else {
+      } else if (!summaryAlreadyDetailed) {
         onProgress?.("트랜스크립트로 요약 보강 중...", 10);
 
         altData.summary = await llm.generateText(
@@ -215,6 +210,8 @@ ${transcriptText}`,
             maxOutputTokens: 8192,
           }
         );
+      } else {
+        onProgress?.("기존 요약이 충분해 보강 호출을 건너뜁니다...", 10);
       }
     }
 
@@ -231,7 +228,7 @@ ${transcriptText}`,
       subject,
       Array.from(existingConceptNames)
     );
-    conceptResult.concepts = this.filterRelatedConcepts(
+    conceptResult.concepts = this.normalizeConcepts(
       conceptResult.concepts,
       existingConceptNames
     );
@@ -263,18 +260,31 @@ ${transcriptText}`,
 
     const noteFilename = sanitizeFilename(altData.title);
     const notePath = `${subjectFolder}/${noteFilename}.md`;
+    const updateSummary = await vm.buildManagedNoteUpdateSummary(
+      notePath,
+      lectureMarkdown,
+      conceptNotes.map((concept) => concept.name)
+    );
+    if (updateSummary.isUpdate && onConfirmUpdate) {
+      const confirmed = await onConfirmUpdate(updateSummary);
+      if (!confirmed) throw new Error("업데이트가 취소되었습니다");
+      onProgress?.("Vault에 저장 중...", 90);
+    }
+
     const saveResult = await vm.saveManagedNote(lectureMarkdown, notePath);
     await vm.saveConceptNotes(conceptNotes, noteFilename, subject);
 
-    onProgress?.("완료!", 100);
-
     // Save raw PDF to vault for side-by-side view
     let pdfPath: string | undefined;
-    if (preview.pdfData) {
+    const pdfData = await pdfDataPromise;
+    if (pdfData) {
+      onProgress?.("PDF 저장 중...", 95);
       const pdfFilename = sanitizeFilename(altData.title);
       const rawPdfPath = `${assetsFolder}/${pdfFilename}.pdf`;
-      pdfPath = await vm.saveRawFile(preview.pdfData, rawPdfPath);
+      pdfPath = await vm.saveRawFile(pdfData, rawPdfPath);
     }
+
+    onProgress?.("완료!", 100);
 
     const record: ImportRecord = {
       url,
@@ -287,6 +297,7 @@ ${transcriptText}`,
       examPeriod,
       pdfPath,
       wasUpdate: saveResult.wasUpdate,
+      updateSummary,
     };
     record.wasUpdate = this.upsertRecentImport(record) || saveResult.wasUpdate;
     await this.savePluginData();
@@ -316,8 +327,9 @@ ${transcriptText}`,
     subject: string,
     url: string,
     llm: ILLMProvider,
-    pdfData?: ArrayBuffer | null,
-    onProgress?: (stage: string, percent: number) => void
+    pdfDataPromise: Promise<ArrayBuffer | null>,
+    onProgress?: (stage: string, percent: number) => void,
+    onConfirmUpdate?: (summary: ImportUpdateSummary) => Promise<boolean>
   ): Promise<ImportRecord> {
     onProgress?.("부분 노트 생성 중...", 50);
 
@@ -337,10 +349,21 @@ ${transcriptText}`,
     const subjectFolder = `${vm.getBasePath()}/${sanitizeFilename(subject)}`;
     const noteFilename = sanitizeFilename(altData.title);
     const notePath = `${subjectFolder}/${noteFilename}.md`;
+    const updateSummary = await vm.buildManagedNoteUpdateSummary(
+      notePath,
+      lectureMarkdown,
+      []
+    );
+    if (updateSummary.isUpdate && onConfirmUpdate) {
+      const confirmed = await onConfirmUpdate(updateSummary);
+      if (!confirmed) throw new Error("업데이트가 취소되었습니다");
+      onProgress?.("Vault에 저장 중...", 90);
+    }
 
     const saveResult = await vm.saveManagedNote(lectureMarkdown, notePath);
 
     let pdfPath: string | undefined;
+    const pdfData = await pdfDataPromise;
     if (pdfData) {
       const assetsFolder = `${subjectFolder}/assets`;
       const pdfFilename = sanitizeFilename(altData.title);
@@ -360,6 +383,7 @@ ${transcriptText}`,
       altId: altData.metadata.noteId || undefined,
       pdfPath,
       wasUpdate: saveResult.wasUpdate,
+      updateSummary,
     };
     record.wasUpdate = this.upsertRecentImport(record) || saveResult.wasUpdate;
     await this.savePluginData();
@@ -399,27 +423,83 @@ Rules:
     }
   }
 
-  private filterRelatedConcepts(
+  private normalizeConcepts(
     concepts: ConceptData[],
     existingConceptNames: Set<string>
   ): ConceptData[] {
-    const allowed = new Set<string>();
+    const canonicalByKey = new Map<string, string>();
+    for (const name of existingConceptNames) {
+      canonicalByKey.set(this.normalizeConceptKey(name), name);
+    }
+
+    const merged = new Map<string, ConceptData>();
     for (const concept of concepts) {
+      const rawName = concept.name.trim();
+      if (!rawName) continue;
+
+      const canonicalName =
+        canonicalByKey.get(this.normalizeConceptKey(rawName)) || rawName;
+      const current = merged.get(canonicalName);
+      const next = { ...concept, name: canonicalName };
+
+      if (current) {
+        current.relatedConcepts.push(...next.relatedConcepts);
+        current.definition = current.definition || next.definition;
+        current.example = current.example || next.example;
+        current.caution = current.caution || next.caution;
+        current.lectureContext = current.lectureContext || next.lectureContext;
+      } else {
+        merged.set(canonicalName, next);
+      }
+    }
+
+    const normalized = Array.from(merged.values());
+    const allowed = new Set<string>();
+    for (const concept of normalized) {
       allowed.add(concept.name.toLowerCase());
       allowed.add(sanitizeFilename(concept.name).toLowerCase());
+      allowed.add(this.normalizeConceptKey(concept.name));
     }
     for (const name of existingConceptNames) {
       allowed.add(name.toLowerCase());
       allowed.add(sanitizeFilename(name).toLowerCase());
+      allowed.add(this.normalizeConceptKey(name));
     }
 
-    return concepts.map((concept) => ({
+    return normalized.map((concept) => ({
       ...concept,
-      relatedConcepts: concept.relatedConcepts.filter((name) =>
-        allowed.has(name.toLowerCase()) ||
-        allowed.has(sanitizeFilename(name).toLowerCase())
-      ),
+      relatedConcepts: Array.from(new Set(concept.relatedConcepts))
+        .map((name) => canonicalByKey.get(this.normalizeConceptKey(name)) || name)
+        .filter((name) => {
+          const key = this.normalizeConceptKey(name);
+          return (
+            key !== this.normalizeConceptKey(concept.name) &&
+            (allowed.has(name.toLowerCase()) ||
+              allowed.has(sanitizeFilename(name).toLowerCase()) ||
+              allowed.has(key))
+          );
+        }),
     }));
+  }
+
+  private async downloadPdfForImport(
+    preview: ImportPreview
+  ): Promise<ArrayBuffer | null> {
+    if (preview.pdfData) return preview.pdfData;
+    if (!preview.pdfUrl || !this.pdfProcessor) return null;
+
+    try {
+      return await this.pdfProcessor.downloadPdf(preview.pdfUrl);
+    } catch (e) {
+      console.warn("[Alt2Obsidian] PDF download failed:", e);
+      return null;
+    }
+  }
+
+  private normalizeConceptKey(name: string): string {
+    return sanitizeFilename(name)
+      .toLowerCase()
+      .replace(/[\s_-]+/g, "");
   }
 
   private upsertRecentImport(record: ImportRecord): boolean {

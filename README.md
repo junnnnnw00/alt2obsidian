@@ -8,6 +8,8 @@ LLM(Gemini)을 활용하여 강의 내용을 정리하고, 핵심 개념을 `[[W
 
 - **Alt 노트 가져오기**: Alt URL만 입력하면 요약 마크다운 노트와 원본 PDF를 자동 저장
 - **개념 네트워크**: LLM이 핵심 개념을 추출하여 실제 개념 노트가 있는 항목만 `[[Wikilink]]`와 `#태그`로 연결
+- **안전한 재가져오기**: 기존 노트는 변경 요약을 확인한 뒤 관리 구간만 업데이트하고 `내 메모`는 보존
+- **개념 정리 보강**: 기존 개념명 재사용, 중복 개념 정리, 예시/주의점/강의 맥락을 포함한 개념 노트 생성
 - **시험대비 요약본**: 과목별 강의 관계도 + 핵심 요약을 자동 생성
 - **사이드바 UI**: URL 입력, 과목 선택, 최근 노트, 시험요약본 생성을 한 곳에서 관리
 - **다중 LLM 지원**: Gemini (기본), OpenAI, Claude 인터페이스 준비 (추상화 구조)
@@ -130,6 +132,7 @@ tags: [csed311, pipeline, cpu-architecture, hazard]
 date: "2026-03-25"
 ---
 
+<!-- alt2obsidian:start -->
 # CSED311 Lec7-pipelined-CPU
 
 ## 개요
@@ -138,6 +141,9 @@ date: "2026-03-25"
 
 ## Pipeline Stages
 ...
+<!-- alt2obsidian:end -->
+
+## 내 메모
 ```
 
 ### 개념 노트
@@ -149,6 +155,10 @@ tags: [concept]
 # Pipeline Hazard
 
 **정의:** 파이프라인에서 다음 명령어 실행이 방해되는 상황
+
+**강의 맥락:** 파이프라인 CPU에서 stall과 forwarding이 필요한 이유를 설명할 때 사용됨
+**예시:** load-use dependency가 바로 다음 명령어를 지연시킬 수 있음
+**주의:** data hazard와 structural hazard를 구분해야 함
 
 **관련 강의:** [[CSED311 Lec7-pipelined-CPU]]
 **관련 개념:** [[Data Hazard]], [[Forwarding]]

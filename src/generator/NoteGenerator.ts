@@ -56,7 +56,8 @@ export class NoteGenerator {
       `${MANAGED_NOTE_START}\n` +
       `# ${altData.title}\n\n` +
       content.trim() +
-      `\n${MANAGED_NOTE_END}\n`;
+      `\n${MANAGED_NOTE_END}\n\n` +
+      "## 내 메모\n";
 
     // Build concept notes
     const conceptNotes: ConceptNote[] = llmResult.concepts.map((c) => ({
@@ -64,6 +65,9 @@ export class NoteGenerator {
       definition: c.definition,
       relatedLectures: [title],
       relatedConcepts: c.relatedConcepts,
+      example: c.example,
+      caution: c.caution,
+      lectureContext: c.lectureContext,
     }));
 
     return { lectureMarkdown, conceptNotes };
@@ -92,7 +96,8 @@ export class NoteGenerator {
       `> [!warning] Partial import\n` +
       `> Alt page format may have changed. Only title and description were extracted.\n\n` +
       (altData.summary || "내용을 추출할 수 없습니다.") +
-      `\n${MANAGED_NOTE_END}\n`;
+      `\n${MANAGED_NOTE_END}\n\n` +
+      "## 내 메모\n";
 
     return { lectureMarkdown, conceptNotes: [] };
   }

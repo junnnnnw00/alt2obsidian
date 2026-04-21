@@ -2,6 +2,7 @@ import { App, TFolder, normalizePath } from "obsidian";
 import {
   ConceptNote,
   ExamPeriod,
+  ImportUpdateSummary,
   MANAGED_NOTE_START,
   MANAGED_NOTE_END,
 } from "../types";
@@ -10,6 +11,7 @@ import { ConceptRegistry } from "./ConceptRegistry";
 
 export class VaultManager {
   private conceptRegistry = new ConceptRegistry();
+  private conceptNameCache = new Map<string, Set<string>>();
 
   constructor(
     private app: App,
@@ -72,6 +74,45 @@ export class VaultManager {
     return { path: normalized, wasUpdate: true };
   }
 
+  async buildManagedNoteUpdateSummary(
+    path: string,
+    nextContent: string,
+    nextConceptNames: string[]
+  ): Promise<ImportUpdateSummary> {
+    const normalized = normalizePath(path);
+    const existing = this.app.vault.getAbstractFileByPath(normalized);
+    if (!existing) {
+      return {
+        isUpdate: false,
+        addedSections: [],
+        removedSections: [],
+        addedConcepts: nextConceptNames,
+        removedConcepts: [],
+        changedLineCount: 0,
+      };
+    }
+
+    const currentContent = await this.app.vault.read(existing as any);
+    const currentParts = this.splitManagedNote(currentContent);
+    const nextParts = this.splitManagedNote(nextContent);
+    const currentManaged = currentParts.managed || currentContent;
+    const nextManaged = nextParts.managed || nextContent;
+
+    const currentSections = this.extractHeadings(currentManaged);
+    const nextSections = this.extractHeadings(nextManaged);
+    const currentConcepts = this.extractWikilinks(currentManaged);
+    const nextConcepts = new Set(nextConceptNames);
+
+    return {
+      isUpdate: true,
+      addedSections: this.diffSet(nextSections, currentSections),
+      removedSections: this.diffSet(currentSections, nextSections),
+      addedConcepts: this.diffSet(nextConcepts, currentConcepts),
+      removedConcepts: this.diffSet(currentConcepts, nextConcepts),
+      changedLineCount: this.countChangedLines(currentManaged, nextManaged),
+    };
+  }
+
   async saveConceptNotes(
     concepts: ConceptNote[],
     lectureTitle: string,
@@ -93,15 +134,13 @@ export class VaultManager {
         const existing = this.app.vault.getAbstractFileByPath(path);
 
         if (existing) {
-          // Update existing concept note: append lecture reference
           const currentContent = await this.app.vault.read(existing as any);
-          if (!currentContent.includes(`[[${lectureTitle}]]`)) {
-            const updated = this.appendLectureReference(
-              currentContent,
-              lectureTitle
-            );
-            await this.app.vault.modify(existing as any, updated);
-          }
+          const updated = this.updateExistingConceptNote(
+            currentContent,
+            concept,
+            lectureTitle
+          );
+          if (updated !== currentContent) await this.app.vault.modify(existing as any, updated);
           savedPaths.push(path);
         } else if (this.conceptRegistry.acquire(concept.name)) {
           acquiredNames.push(concept.name);
@@ -112,12 +151,17 @@ export class VaultManager {
       }
     } finally {
       this.conceptRegistry.releaseAll(acquiredNames);
+      if (subject) this.conceptNameCache.delete(this.normalizeSubjectKey(subject));
     }
 
     return savedPaths;
   }
 
   async getExistingConceptNames(subject: string): Promise<Set<string>> {
+    const cacheKey = this.normalizeSubjectKey(subject);
+    const cached = this.conceptNameCache.get(cacheKey);
+    if (cached) return new Set(cached);
+
     const conceptsFolder = normalizePath(
       `${this.basePath}/${sanitizeFilename(subject)}/Concepts`
     );
@@ -132,6 +176,7 @@ export class VaultManager {
       }
     }
 
+    this.conceptNameCache.set(cacheKey, new Set(names));
     return names;
   }
 
@@ -210,12 +255,41 @@ export class VaultManager {
       "",
       `**정의:** ${concept.definition}`,
       "",
+      concept.lectureContext ? `**강의 맥락:** ${concept.lectureContext}` : "",
+      concept.example ? `**예시:** ${concept.example}` : "",
+      concept.caution ? `**주의:** ${concept.caution}` : "",
+      "",
       lectures ? `**관련 강의:** ${lectures}` : "",
       related ? `**관련 개념:** ${related}` : "",
       "",
     ]
       .filter(Boolean)
       .join("\n");
+  }
+
+  private updateExistingConceptNote(
+    content: string,
+    concept: ConceptNote,
+    lectureTitle: string
+  ): string {
+    let updated = this.appendLectureReference(content, lectureTitle);
+    updated = this.appendMissingConceptField(
+      updated,
+      "**강의 맥락:**",
+      concept.lectureContext
+    );
+    updated = this.appendMissingConceptField(
+      updated,
+      "**예시:**",
+      concept.example
+    );
+    updated = this.appendMissingConceptField(
+      updated,
+      "**주의:**",
+      concept.caution
+    );
+    updated = this.appendRelatedConcepts(updated, concept.relatedConcepts);
+    return updated;
   }
 
   private appendLectureReference(
@@ -233,6 +307,37 @@ export class VaultManager {
       return content.replace(existingLine[0], `${marker} ${nextRefs}`);
     }
     return content + `\n**관련 강의:** ${ref}\n`;
+  }
+
+  private appendMissingConceptField(
+    content: string,
+    marker: string,
+    value?: string
+  ): string {
+    if (!value || content.includes(marker)) return content;
+    const relatedMarker = "**관련 강의:**";
+    const line = `${marker} ${value}`;
+    if (content.includes(relatedMarker)) {
+      return content.replace(relatedMarker, `${line}\n\n${relatedMarker}`);
+    }
+    return content.trimEnd() + `\n\n${line}\n`;
+  }
+
+  private appendRelatedConcepts(content: string, relatedConcepts: string[]): string {
+    if (relatedConcepts.length === 0) return content;
+
+    const refs = relatedConcepts.map((concept) => `[[${concept}]]`);
+    const existingLine = content.match(/^(\*\*관련 개념:\*\*\s*)(.*)$/m);
+    if (!existingLine) {
+      return content.trimEnd() + `\n**관련 개념:** ${refs.join(", ")}\n`;
+    }
+
+    const current = existingLine[2].trim();
+    const additions = refs.filter((ref) => !current.includes(ref));
+    if (additions.length === 0) return content;
+
+    const nextRefs = current ? `${current}, ${additions.join(", ")}` : additions.join(", ");
+    return content.replace(existingLine[0], `**관련 개념:** ${nextRefs}`);
   }
 
   private mergeManagedNote(currentContent: string, nextContent: string): string {
@@ -287,5 +392,45 @@ export class VaultManager {
       managed: content.slice(start, managedEnd).trimEnd(),
       after: content.slice(managedEnd),
     };
+  }
+
+  private extractHeadings(content: string): Set<string> {
+    const headings = new Set<string>();
+    for (const line of content.split("\n")) {
+      const match = line.match(/^#{1,6}\s+(.+)$/);
+      if (match) headings.add(match[1].trim());
+    }
+    return headings;
+  }
+
+  private extractWikilinks(content: string): Set<string> {
+    const links = new Set<string>();
+    const regex = /\[\[([^\]|#\n]+?)(?:\|[^\]]+)?\]\]/g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(content)) !== null) {
+      links.add(match[1].trim());
+    }
+    return links;
+  }
+
+  private diffSet(left: Set<string>, right: Set<string>): string[] {
+    return Array.from(left)
+      .filter((item) => !right.has(item))
+      .slice(0, 8);
+  }
+
+  private countChangedLines(currentContent: string, nextContent: string): number {
+    const currentLines = new Set(
+      currentContent.split("\n").map((line) => line.trim()).filter(Boolean)
+    );
+    return nextContent
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !currentLines.has(line))
+      .length;
+  }
+
+  private normalizeSubjectKey(subject: string): string {
+    return sanitizeFilename(subject).toLowerCase();
   }
 }

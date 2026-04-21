@@ -1,6 +1,6 @@
-import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, Modal } from "obsidian";
 import type Alt2ObsidianPlugin from "../main";
-import { ImportPreview, ExamPeriod } from "../types";
+import { ImportPreview, ExamPeriod, ImportUpdateSummary } from "../types";
 
 export const VIEW_TYPE_SIDEBAR = "alt2obsidian-sidebar";
 
@@ -190,6 +190,17 @@ export class Alt2ObsidianSidebarView extends ItemView {
         text: record.subject,
         cls: "alt2obsidian-recent-item-subject",
       });
+      item.createSpan({
+        text: record.date,
+        cls: "alt2obsidian-recent-item-date",
+      });
+
+      if (record.wasUpdate) {
+        item.createSpan({
+          text: "업데이트",
+          cls: "alt2obsidian-recent-item-updated",
+        });
+      }
 
       if (record.parseQuality === "partial") {
         item.createSpan({
@@ -287,7 +298,7 @@ export class Alt2ObsidianSidebarView extends ItemView {
     this.clearMessage();
 
     try {
-      // Phase 1: Preview — scrape + download PDF + render thumbnails
+      // Phase 1: Preview — scrape Alt note data.
       this.updateProgress(0, "Alt 노트 가져오는 중...");
 
       const preview = await this.plugin.previewImport(url, (stage, pct) => {
@@ -321,7 +332,8 @@ export class Alt2ObsidianSidebarView extends ItemView {
       examPeriod,
       (stage, pct) => {
         this.updateProgress(pct, stage);
-      }
+      },
+      (summary) => this.confirmUpdate(summary)
     );
 
     this.hideProgress();
@@ -440,7 +452,82 @@ export class Alt2ObsidianSidebarView extends ItemView {
     this.messageContainer?.empty();
   }
 
+  private confirmUpdate(summary: ImportUpdateSummary): Promise<boolean> {
+    this.hideProgress();
+    return new Promise((resolve) => {
+      new UpdatePreviewModal(this.app, summary, resolve).open();
+    });
+  }
+
   async onClose(): Promise<void> {
     // Cleanup
+  }
+}
+
+class UpdatePreviewModal extends Modal {
+  private resolved = false;
+
+  constructor(
+    app: import("obsidian").App,
+    private summary: ImportUpdateSummary,
+    private resolve: (confirmed: boolean) => void
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("alt2obsidian-update-modal");
+
+    contentEl.createEl("h2", { text: "기존 노트 업데이트" });
+    contentEl.createEl("p", {
+      text: `${this.summary.changedLineCount}개의 새 줄이 감지되었습니다. 관리 구간만 교체하고 내 메모는 보존합니다.`,
+    });
+
+    this.renderList("추가 섹션", this.summary.addedSections);
+    this.renderList("제거 섹션", this.summary.removedSections);
+    this.renderList("추가 개념", this.summary.addedConcepts);
+    this.renderList("제거 개념", this.summary.removedConcepts);
+
+    const actions = contentEl.createDiv({ cls: "alt2obsidian-update-actions" });
+    const cancelBtn = actions.createEl("button", { text: "취소" });
+    cancelBtn.addEventListener("click", () => this.finish(false));
+
+    const confirmBtn = actions.createEl("button", {
+      text: "업데이트",
+      cls: "mod-cta",
+    });
+    confirmBtn.addEventListener("click", () => this.finish(true));
+  }
+
+  onClose(): void {
+    if (!this.resolved) this.resolve(false);
+  }
+
+  private renderList(label: string, items: string[]): void {
+    const section = this.contentEl.createDiv({
+      cls: "alt2obsidian-update-section",
+    });
+    section.createEl("h3", { text: label });
+
+    if (items.length === 0) {
+      section.createEl("p", {
+        text: "없음",
+        cls: "alt2obsidian-update-empty",
+      });
+      return;
+    }
+
+    const list = section.createEl("ul");
+    for (const item of items) {
+      list.createEl("li", { text: item });
+    }
+  }
+
+  private finish(confirmed: boolean): void {
+    this.resolved = true;
+    this.resolve(confirmed);
+    this.close();
   }
 }
