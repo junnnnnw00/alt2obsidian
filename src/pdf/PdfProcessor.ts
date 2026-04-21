@@ -61,7 +61,7 @@ export class PdfProcessor {
     pdfData: ArrayBuffer,
     onProgress?: (page: number, total: number) => void
   ): Promise<string[]> {
-    const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: pdfData.slice(0) }).promise;
     const thumbnails: string[] = [];
 
     for (let i = 1; i <= pdf.numPages; i++) {
@@ -97,7 +97,7 @@ export class PdfProcessor {
     titleSlug: string,
     onProgress?: (page: number, total: number) => void
   ): Promise<SlideImage[]> {
-    const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: pdfData.slice(0) }).promise;
     const images: SlideImage[] = [];
     const total = selectedIndices.length;
 
@@ -142,7 +142,7 @@ export class PdfProcessor {
     titleSlug: string,
     onProgress?: (page: number, total: number) => void
   ): Promise<SlideImage[]> {
-    const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: pdfData.slice(0) }).promise;
     const images: SlideImage[] = [];
     const batchSize = 10;
 
