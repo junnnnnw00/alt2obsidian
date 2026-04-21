@@ -165,6 +165,43 @@ export class VaultManager {
       .map((child) => child.name);
   }
 
+  async saveWikilinkStubs(
+    content: string,
+    subject: string,
+    lectureTitle: string
+  ): Promise<void> {
+    const conceptsFolder = normalizePath(
+      `${this.basePath}/${sanitizeFilename(subject)}/Concepts`
+    );
+    await this.ensureFolder(conceptsFolder);
+
+    const wikilinkRegex = /\[\[([^\]|#\n]+?)(?:\|[^\]]+)?\]\]/g;
+    const wikilinks = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = wikilinkRegex.exec(content)) !== null) {
+      const name = match[1].trim();
+      if (name && name !== lectureTitle) wikilinks.add(name);
+    }
+
+    for (const name of wikilinks) {
+      const filename = sanitizeFilename(name);
+      const filePath = normalizePath(`${conceptsFolder}/${filename}.md`);
+      if (!this.app.vault.getAbstractFileByPath(filePath)) {
+        const stubContent = [
+          "---",
+          `tags: [concept]`,
+          "---",
+          "",
+          `# ${name}`,
+          "",
+          `**관련 강의:** [[${lectureTitle}]]`,
+          "",
+        ].join("\n");
+        await this.app.vault.create(filePath, stubContent);
+      }
+    }
+  }
+
   private buildConceptNoteContent(concept: ConceptNote): string {
     const related = concept.relatedConcepts
       .map((c) => `[[${c}]]`)

@@ -303,6 +303,7 @@ ${transcriptText}`,
     const notePath = `${subjectFolder}/${noteFilename}.md`;
     await vm.saveNote(lectureMarkdown, notePath);
     await vm.saveConceptNotes(conceptNotes, noteFilename, subject);
+    await vm.saveWikilinkStubs(lectureMarkdown, subject, noteFilename);
 
     onProgress?.("완료!", 100);
 
