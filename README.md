@@ -6,8 +6,8 @@ LLM(Gemini)을 활용하여 강의 내용을 정리하고, 핵심 개념을 `[[W
 
 ## 주요 기능
 
-- **Alt 노트 가져오기**: Alt URL만 입력하면 요약 + 슬라이드 이미지가 포함된 마크다운 노트 자동 생성
-- **개념 네트워크**: LLM이 핵심 개념을 추출하여 별도 노트 + `[[Wikilink]]` + `#태그`로 연결
+- **Alt 노트 가져오기**: Alt URL만 입력하면 요약 마크다운 노트와 원본 PDF를 자동 저장
+- **개념 네트워크**: LLM이 핵심 개념을 추출하여 실제 개념 노트가 있는 항목만 `[[Wikilink]]`와 `#태그`로 연결
 - **시험대비 요약본**: 과목별 강의 관계도 + 핵심 요약을 자동 생성
 - **사이드바 UI**: URL 입력, 과목 선택, 최근 노트, 시험요약본 생성을 한 곳에서 관리
 - **다중 LLM 지원**: Gemini (기본), OpenAI, Claude 인터페이스 준비 (추상화 구조)
@@ -104,8 +104,7 @@ Alt2Obsidian을 사용하려면 먼저 Alt 앱에서 강의 노트의 공유 링
    ├── CSED311/
    │   ├── CSED311 Lec7-pipelined-CPU.md    ← 강의 노트
    │   ├── assets/
-   │   │   ├── csed311_lec7-pipelined-cpu_slide_01.png
-   │   │   └── ...
+   │   │   └── CSED311 Lec7-pipelined-CPU.pdf
    │   └── Concepts/                        ← 과목별 개념 노트
    │       ├── Pipeline Hazard.md
    │       ├── Forwarding.md
@@ -136,8 +135,6 @@ date: "2026-03-25"
 ## 개요
 - **파이프라인**은 복수의 명령어를 동시에 서로 다른 단계에서 실행해
   [[Pipeline Hazard]]를 고려하면서 처리량을 높이는 기법이다.
-
-![[csed311_lec7_slide_01.png]]
 
 ## Pipeline Stages
 ...

@@ -6,6 +6,7 @@ import {
   ImportPreview,
   LLMProvider as ILLMProvider,
   ExamPeriod,
+  ConceptData,
 } from "./types";
 import { AltScraper } from "./scraper/AltScraper";
 import { PdfProcessor } from "./pdf/PdfProcessor";
@@ -78,8 +79,7 @@ export default class Alt2ObsidianPlugin extends Plugin {
   }
 
   /**
-   * Phase 1: Preview — scrape page, download PDF, render thumbnails.
-   * Returns preview data for the user to select slides before import.
+   * Phase 1: Preview — scrape page and download the original PDF if available.
    */
   async previewImport(
     url: string,
@@ -90,21 +90,13 @@ export default class Alt2ObsidianPlugin extends Plugin {
     onProgress?.("Alt 노트 파싱 완료", 30);
 
     let pdfData: ArrayBuffer | null = null;
-    const slideThumbnails: string[] = [];
 
     if (altData.pdfUrl && this.pdfProcessor) {
       onProgress?.("PDF 다운로드 중...", 40);
       try {
         pdfData = await this.pdfProcessor.downloadPdf(altData.pdfUrl);
-        onProgress?.("슬라이드 미리보기 생성 중...", 55);
-
-        this.pdfProcessor.initWorker();
-        const thumbs = await this.pdfProcessor.renderThumbnails(pdfData, (p, t) => {
-          onProgress?.(`미리보기 생성 (${p}/${t})...`, 55 + Math.floor((p / t) * 40));
-        });
-        slideThumbnails.push(...thumbs);
       } catch (e) {
-        console.warn("[Alt2Obsidian] PDF preview failed:", e);
+        console.warn("[Alt2Obsidian] PDF download failed:", e);
       }
     }
 
@@ -119,20 +111,16 @@ export default class Alt2ObsidianPlugin extends Plugin {
     return {
       altData,
       pdfData,
-      slideThumbnails,
       suggestedSubject,
-      slideCount: slideThumbnails.length,
     };
   }
 
   /**
    * Phase 2: Import — process with LLM and save to vault.
-   * Takes preview data + user's slide selection.
    */
   async importNote(
     url: string,
     preview: ImportPreview,
-    selectedSlides: number[],
     subjectOverride?: string,
     examPeriod?: ExamPeriod,
     onProgress?: (stage: string, percent: number) => void
@@ -154,7 +142,14 @@ export default class Alt2ObsidianPlugin extends Plugin {
     // For partial quality, skip LLM processing
     if (altData.parseQuality === "partial") {
       const subject = subjectOverride || "Unknown";
-      return this.savePartialNote(altData, subject, url, llm, onProgress);
+      return this.savePartialNote(
+        altData,
+        subject,
+        url,
+        llm,
+        preview.pdfData,
+        onProgress
+      );
     }
 
     // Enhance summary with transcript if available
@@ -228,62 +223,34 @@ ${transcriptText}`,
     // LLM: Extract concepts + detect subject
     const conceptExtractor = new ConceptExtractor(llm);
     const subject = subjectOverride || preview.suggestedSubject;
+    const vm = this.vaultManager!;
+    const existingConceptNames = await vm.getExistingConceptNames(subject);
 
     const conceptResult = await conceptExtractor.extract(
       altData.summary,
-      subject
+      subject,
+      Array.from(existingConceptNames)
+    );
+    conceptResult.concepts = this.filterRelatedConcepts(
+      conceptResult.concepts,
+      existingConceptNames
     );
 
     onProgress?.("개념 추출 완료", 50);
 
-    // Render only SELECTED slides to full images
-    let images: import("./types").SlideImage[] = [];
-    if (preview.pdfData && this.pdfProcessor && selectedSlides.length > 0) {
-      onProgress?.("선택된 슬라이드 변환 중...", 55);
-      const titleSlug = sanitizeFilename(altData.title)
-        .replace(/\s+/g, "_")
-        .toLowerCase();
-
-      try {
-        images = await this.pdfProcessor.renderSelectedPages(
-          preview.pdfData,
-          selectedSlides,
-          titleSlug,
-          (page, total) => {
-            const pct = 55 + Math.floor((page / total) * 20);
-            onProgress?.(`슬라이드 변환 (${page}/${total})...`, pct);
-          }
-        );
-      } catch (e) {
-        console.warn("[Alt2Obsidian] PDF rendering failed:", e);
-      }
-    }
-
-    onProgress?.("이미지 배치 결정 중...", 75);
-
-    // Get image placements from LLM
-    const noteGenerator = new NoteGenerator(llm);
-    const imagePlacements =
-      images.length > 0
-        ? await noteGenerator
-            .getImagePlacements(altData.summary, images.length)
-            .catch(() => [])
-        : [];
-
     // Generate markdown
-    onProgress?.("마크다운 노트 생성 중...", 80);
+    onProgress?.("마크다운 노트 생성 중...", 70);
 
     const llmResult = {
       processedSummary: altData.summary,
       concepts: conceptResult.concepts,
       tags: examPeriod ? [...conceptResult.tags, examPeriod] : conceptResult.tags,
       subjectSuggestion: subject,
-      imagePlacements,
     };
 
+    const noteGenerator = new NoteGenerator(llm);
     const { lectureMarkdown, conceptNotes } = await noteGenerator.generate(
       altData,
-      images,
       llmResult,
       subject
     );
@@ -291,19 +258,13 @@ ${transcriptText}`,
     // Save everything to vault
     onProgress?.("Vault에 저장 중...", 90);
 
-    const vm = this.vaultManager!;
     const subjectFolder = `${vm.getBasePath()}/${sanitizeFilename(subject)}`;
     const assetsFolder = `${subjectFolder}/assets`;
 
-    for (const img of images) {
-      await vm.saveImage(img, assetsFolder);
-    }
-
     const noteFilename = sanitizeFilename(altData.title);
     const notePath = `${subjectFolder}/${noteFilename}.md`;
-    await vm.saveNote(lectureMarkdown, notePath);
+    const saveResult = await vm.saveManagedNote(lectureMarkdown, notePath);
     await vm.saveConceptNotes(conceptNotes, noteFilename, subject);
-    await vm.saveWikilinkStubs(lectureMarkdown, subject, noteFilename);
 
     onProgress?.("완료!", 100);
 
@@ -322,13 +283,12 @@ ${transcriptText}`,
       path: notePath,
       date: formatDate(),
       parseQuality: "full",
+      altId: altData.metadata.noteId || undefined,
       examPeriod,
       pdfPath,
+      wasUpdate: saveResult.wasUpdate,
     };
-    this.data.recentImports.unshift(record);
-    if (this.data.recentImports.length > 50) {
-      this.data.recentImports = this.data.recentImports.slice(0, 50);
-    }
+    record.wasUpdate = this.upsertRecentImport(record) || saveResult.wasUpdate;
     await this.savePluginData();
 
     return record;
@@ -356,6 +316,7 @@ ${transcriptText}`,
     subject: string,
     url: string,
     llm: ILLMProvider,
+    pdfData?: ArrayBuffer | null,
     onProgress?: (stage: string, percent: number) => void
   ): Promise<ImportRecord> {
     onProgress?.("부분 노트 생성 중...", 50);
@@ -363,13 +324,11 @@ ${transcriptText}`,
     const noteGenerator = new NoteGenerator(llm);
     const { lectureMarkdown } = await noteGenerator.generate(
       altData,
-      [],
       {
         processedSummary: altData.summary,
         concepts: [],
         tags: [],
         subjectSuggestion: subject,
-        imagePlacements: [],
       },
       subject
     );
@@ -379,7 +338,16 @@ ${transcriptText}`,
     const noteFilename = sanitizeFilename(altData.title);
     const notePath = `${subjectFolder}/${noteFilename}.md`;
 
-    await vm.saveNote(lectureMarkdown, notePath);
+    const saveResult = await vm.saveManagedNote(lectureMarkdown, notePath);
+
+    let pdfPath: string | undefined;
+    if (pdfData) {
+      const assetsFolder = `${subjectFolder}/assets`;
+      const pdfFilename = sanitizeFilename(altData.title);
+      const rawPdfPath = `${assetsFolder}/${pdfFilename}.pdf`;
+      pdfPath = await vm.saveRawFile(pdfData, rawPdfPath);
+    }
+
     onProgress?.("완료!", 100);
 
     const record: ImportRecord = {
@@ -389,8 +357,11 @@ ${transcriptText}`,
       path: notePath,
       date: formatDate(),
       parseQuality: "partial",
+      altId: altData.metadata.noteId || undefined,
+      pdfPath,
+      wasUpdate: saveResult.wasUpdate,
     };
-    this.data.recentImports.unshift(record);
+    record.wasUpdate = this.upsertRecentImport(record) || saveResult.wasUpdate;
     await this.savePluginData();
 
     return record;
@@ -426,6 +397,63 @@ Rules:
     } catch {
       return title.split(/[\s-_]/)[0];
     }
+  }
+
+  private filterRelatedConcepts(
+    concepts: ConceptData[],
+    existingConceptNames: Set<string>
+  ): ConceptData[] {
+    const allowed = new Set<string>();
+    for (const concept of concepts) {
+      allowed.add(concept.name.toLowerCase());
+      allowed.add(sanitizeFilename(concept.name).toLowerCase());
+    }
+    for (const name of existingConceptNames) {
+      allowed.add(name.toLowerCase());
+      allowed.add(sanitizeFilename(name).toLowerCase());
+    }
+
+    return concepts.map((concept) => ({
+      ...concept,
+      relatedConcepts: concept.relatedConcepts.filter((name) =>
+        allowed.has(name.toLowerCase()) ||
+        allowed.has(sanitizeFilename(name).toLowerCase())
+      ),
+    }));
+  }
+
+  private upsertRecentImport(record: ImportRecord): boolean {
+    const existingIndex = this.data.recentImports.findIndex((item) =>
+      this.isSameImportRecord(item, record)
+    );
+    const wasUpdate = existingIndex !== -1;
+    const nextRecord = { ...record, wasUpdate };
+
+    if (wasUpdate) {
+      this.data.recentImports.splice(existingIndex, 1);
+    }
+
+    this.data.recentImports.unshift(nextRecord);
+
+    const seen = new Set<string>();
+    this.data.recentImports = this.data.recentImports.filter((item) => {
+      const key = item.altId || item.url || item.path;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (this.data.recentImports.length > 50) {
+      this.data.recentImports = this.data.recentImports.slice(0, 50);
+    }
+
+    return wasUpdate;
+  }
+
+  private isSameImportRecord(a: ImportRecord, b: ImportRecord): boolean {
+    if (a.altId && b.altId) return a.altId === b.altId;
+    if (a.url && b.url) return a.url === b.url;
+    return a.path === b.path;
   }
 
   private async activateSidebarView(): Promise<void> {

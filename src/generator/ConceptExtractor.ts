@@ -5,8 +5,16 @@ export class ConceptExtractor {
 
   async extract(
     summary: string,
-    subject: string
+    subject: string,
+    existingConceptNames: string[] = []
   ): Promise<{ concepts: ConceptData[]; tags: string[] }> {
+    const existingConceptHint =
+      existingConceptNames.length > 0
+        ? `\nExisting concept notes in this course:\n${existingConceptNames
+            .map((name) => `- ${name}`)
+            .join("\n")}\n`
+        : "";
+
     const prompt = `You are analyzing a lecture note for the course "${subject}".
 
 Given this lecture summary, extract the key academic concepts.
@@ -14,7 +22,8 @@ Given this lecture summary, extract the key academic concepts.
 For each concept provide:
 - name: The concept name (concise, 1-4 words)
 - definition: A clear definition (1-2 sentences)
-- relatedConcepts: Names of other concepts that are closely related
+- relatedConcepts: Names of other concepts that are closely related. Only include concepts that are either in your extracted concepts list or already exist in the course concept notes listed below. Do not invent new related concept names only for linking.
+${existingConceptHint}
 
 Return a JSON object with this structure:
 {

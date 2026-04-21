@@ -13,12 +13,9 @@ export class Alt2ObsidianSidebarView extends ItemView {
   private progressBar: HTMLElement | null = null;
   private progressText: HTMLElement | null = null;
   private messageContainer: HTMLElement | null = null;
-  private slideSelectionContainer: HTMLElement | null = null;
   private recentListContainer: HTMLElement | null = null;
   private examContainer: HTMLElement | null = null;
   private examPeriodSelect: HTMLSelectElement | null = null;
-  private currentPreview: ImportPreview | null = null;
-  private selectedSlides: Set<number> = new Set();
 
   constructor(leaf: WorkspaceLeaf, plugin: Alt2ObsidianPlugin) {
     super(leaf);
@@ -45,8 +42,6 @@ export class Alt2ObsidianSidebarView extends ItemView {
     this.renderInputSection(container);
     this.renderProgressSection(container);
     this.renderMessageSection(container);
-    this.slideSelectionContainer = container.createDiv();
-    this.slideSelectionContainer.hide();
     this.renderRecentSection(container);
     this.renderExamSection(container);
   }
@@ -299,141 +294,17 @@ export class Alt2ObsidianSidebarView extends ItemView {
         this.updateProgress(pct, stage);
       });
 
-      this.currentPreview = preview;
-      this.hideProgress();
-
       // Auto-fill subject if empty
       if (this.subjectInput && !this.subjectInput.value) {
         this.subjectInput.value = preview.suggestedSubject;
       }
 
-      // If slides exist, show selection UI
-      if (preview.slideThumbnails.length > 0) {
-        this.showSlideSelection(preview.slideThumbnails);
-        this.setLoading(false);
-        // Wait for user to click "선택 완료" button
-        return;
-      }
-
-      // No slides — proceed directly
       await this.executeImport(url, preview);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "알 수 없는 오류";
       this.showError(msg);
     } finally {
       this.setLoading(false);
-    }
-  }
-
-  private showSlideSelection(thumbnails: string[]): void {
-    if (!this.slideSelectionContainer) return;
-    this.slideSelectionContainer.empty();
-    this.slideSelectionContainer.show();
-
-    // Select all by default
-    this.selectedSlides = new Set(thumbnails.map((_, i) => i));
-
-    const header = this.slideSelectionContainer.createDiv({
-      cls: "alt2obsidian-slide-header",
-    });
-    header.createEl("h6", {
-      text: `슬라이드 선택 (${thumbnails.length}장)`,
-      cls: "alt2obsidian-section-header",
-    });
-
-    const actions = header.createDiv({ cls: "alt2obsidian-slide-actions" });
-
-    const selectAllBtn = actions.createEl("span", {
-      text: "전체 선택",
-      cls: "alt2obsidian-slide-action-btn",
-    });
-    selectAllBtn.addEventListener("click", () => {
-      this.selectedSlides = new Set(thumbnails.map((_, i) => i));
-      grid.querySelectorAll(".alt2obsidian-slide-thumb").forEach((el) =>
-        el.addClass("is-selected")
-      );
-      this.updateSelectionCount(thumbnails.length);
-    });
-
-    const deselectAllBtn = actions.createEl("span", {
-      text: "전체 해제",
-      cls: "alt2obsidian-slide-action-btn",
-    });
-    deselectAllBtn.addEventListener("click", () => {
-      this.selectedSlides.clear();
-      grid.querySelectorAll(".alt2obsidian-slide-thumb").forEach((el) =>
-        el.removeClass("is-selected")
-      );
-      this.updateSelectionCount(thumbnails.length);
-    });
-
-    const grid = this.slideSelectionContainer.createDiv({
-      cls: "alt2obsidian-slide-grid",
-    });
-
-    thumbnails.forEach((dataUrl, idx) => {
-      const thumb = grid.createDiv({
-        cls: "alt2obsidian-slide-thumb is-selected",
-      });
-      const img = thumb.createEl("img", { attr: { src: dataUrl } });
-      img.addClass("alt2obsidian-slide-img");
-      thumb.createDiv({
-        text: `${idx + 1}`,
-        cls: "alt2obsidian-slide-num",
-      });
-
-      thumb.addEventListener("click", () => {
-        if (this.selectedSlides.has(idx)) {
-          this.selectedSlides.delete(idx);
-          thumb.removeClass("is-selected");
-        } else {
-          this.selectedSlides.add(idx);
-          thumb.addClass("is-selected");
-        }
-        this.updateSelectionCount(thumbnails.length);
-      });
-    });
-
-    const countText = this.slideSelectionContainer.createDiv({
-      cls: "alt2obsidian-slide-count",
-    });
-    countText.id = "alt2obsidian-slide-count";
-    this.updateSelectionCount(thumbnails.length);
-
-    const confirmBtn = this.slideSelectionContainer.createEl("button", {
-      text: `선택 완료 (${this.selectedSlides.size}장 포함)`,
-      cls: "alt2obsidian-import-btn mod-cta",
-    });
-    confirmBtn.id = "alt2obsidian-slide-confirm";
-    confirmBtn.addEventListener("click", () => this.handleSlideConfirm());
-  }
-
-  private updateSelectionCount(total: number): void {
-    const countEl = document.getElementById("alt2obsidian-slide-count");
-    if (countEl) {
-      countEl.textContent = `${this.selectedSlides.size}/${total}장 선택됨`;
-    }
-    const confirmBtn = document.getElementById("alt2obsidian-slide-confirm");
-    if (confirmBtn) {
-      confirmBtn.textContent = `선택 완료 (${this.selectedSlides.size}장 포함)`;
-    }
-  }
-
-  private async handleSlideConfirm(): Promise<void> {
-    if (!this.currentPreview) return;
-    const url = this.urlInput?.value?.trim() || "";
-
-    this.slideSelectionContainer?.hide();
-    this.setLoading(true);
-
-    try {
-      await this.executeImport(url, this.currentPreview);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "알 수 없는 오류";
-      this.showError(msg);
-    } finally {
-      this.setLoading(false);
-      this.currentPreview = null;
     }
   }
 
@@ -446,7 +317,6 @@ export class Alt2ObsidianSidebarView extends ItemView {
     const result = await this.plugin.importNote(
       url,
       preview,
-      Array.from(this.selectedSlides).sort((a, b) => a - b),
       this.subjectInput?.value?.trim() || undefined,
       examPeriod,
       (stage, pct) => {
@@ -455,12 +325,12 @@ export class Alt2ObsidianSidebarView extends ItemView {
     );
 
     this.hideProgress();
-    this.showSuccess(`"${result.title}" → ${result.subject} 가져오기 완료!`);
+    const actionLabel = result.wasUpdate ? "업데이트 완료" : "가져오기 완료";
+    this.showSuccess(`"${result.title}" → ${result.subject} ${actionLabel}!`);
 
     if (this.urlInput) this.urlInput.value = "";
     if (this.subjectInput) this.subjectInput.value = "";
     if (this.examPeriodSelect) this.examPeriodSelect.value = "";
-    this.selectedSlides.clear();
     this.containerEl.querySelectorAll(".alt2obsidian-subject-chip").forEach(
       (c) => c.removeClass("is-active")
     );

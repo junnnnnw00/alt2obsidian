@@ -33,18 +33,11 @@ export interface AltNoteMetadata {
   visibility: string | null;
 }
 
-export interface SlideImage {
-  pageNum: number;
-  data: ArrayBuffer;
-  filename: string;
-}
-
 export interface LLMResult {
   processedSummary: string;
   concepts: ConceptData[];
   tags: string[];
   subjectSuggestion: string;
-  imagePlacements: ImagePlacement[];
 }
 
 export interface ConceptData {
@@ -60,11 +53,6 @@ export interface ConceptNote {
   relatedConcepts: string[];
 }
 
-export interface ImagePlacement {
-  imageIndex: number;
-  afterSection: string;
-}
-
 export interface ImportRecord {
   url: string;
   title: string;
@@ -72,16 +60,16 @@ export interface ImportRecord {
   path: string;
   date: string;
   parseQuality: "full" | "partial";
+  altId?: string;
   examPeriod?: ExamPeriod;
   pdfPath?: string;
+  wasUpdate?: boolean;
 }
 
 export interface ImportPreview {
   altData: AltNoteData;
   pdfData: ArrayBuffer | null;
-  slideThumbnails: string[];
   suggestedSubject: string;
-  slideCount: number;
 }
 
 export interface PluginData {
@@ -108,3 +96,6 @@ export interface LLMProvider {
   ): Promise<T>;
   estimateTokens(text: string): number;
 }
+
+export const MANAGED_NOTE_START = "<!-- alt2obsidian:start -->";
+export const MANAGED_NOTE_END = "<!-- alt2obsidian:end -->";

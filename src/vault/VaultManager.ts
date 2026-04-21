@@ -1,5 +1,10 @@
 import { App, TFolder, normalizePath } from "obsidian";
-import { SlideImage, ConceptNote, ExamPeriod } from "../types";
+import {
+  ConceptNote,
+  ExamPeriod,
+  MANAGED_NOTE_START,
+  MANAGED_NOTE_END,
+} from "../types";
 import { sanitizeFilename } from "../utils/helpers";
 import { ConceptRegistry } from "./ConceptRegistry";
 
@@ -31,22 +36,6 @@ export class VaultManager {
     }
   }
 
-  async saveImage(image: SlideImage, folderPath: string): Promise<string> {
-    const normalized = normalizePath(
-      `${folderPath}/${sanitizeFilename(image.filename)}`
-    );
-    await this.ensureFolder(folderPath);
-
-    const existing = this.app.vault.getAbstractFileByPath(normalized);
-    if (existing) {
-      await this.app.vault.modifyBinary(existing as any, image.data);
-    } else {
-      await this.app.vault.createBinary(normalized, image.data);
-    }
-
-    return image.filename;
-  }
-
   async saveNote(content: string, path: string): Promise<string> {
     const normalized = normalizePath(path);
     const dir = normalized.substring(0, normalized.lastIndexOf("/"));
@@ -60,6 +49,27 @@ export class VaultManager {
     }
 
     return normalized;
+  }
+
+  async saveManagedNote(
+    content: string,
+    path: string
+  ): Promise<{ path: string; wasUpdate: boolean }> {
+    const normalized = normalizePath(path);
+    const dir = normalized.substring(0, normalized.lastIndexOf("/"));
+    await this.ensureFolder(dir);
+
+    const existing = this.app.vault.getAbstractFileByPath(normalized);
+    if (!existing) {
+      await this.app.vault.create(normalized, content);
+      return { path: normalized, wasUpdate: false };
+    }
+
+    const currentContent = await this.app.vault.read(existing as any);
+    const updatedContent = this.mergeManagedNote(currentContent, content);
+    await this.app.vault.modify(existing as any, updatedContent);
+
+    return { path: normalized, wasUpdate: true };
   }
 
   async saveConceptNotes(
@@ -105,6 +115,24 @@ export class VaultManager {
     }
 
     return savedPaths;
+  }
+
+  async getExistingConceptNames(subject: string): Promise<Set<string>> {
+    const conceptsFolder = normalizePath(
+      `${this.basePath}/${sanitizeFilename(subject)}/Concepts`
+    );
+    const folder = this.app.vault.getAbstractFileByPath(conceptsFolder);
+    const names = new Set<string>();
+
+    if (!(folder instanceof TFolder)) return names;
+
+    for (const child of folder.children) {
+      if (child.name.endsWith(".md")) {
+        names.add(child.name.replace(/\.md$/, ""));
+      }
+    }
+
+    return names;
   }
 
   async readNotesForSubject(
@@ -165,43 +193,6 @@ export class VaultManager {
       .map((child) => child.name);
   }
 
-  async saveWikilinkStubs(
-    content: string,
-    subject: string,
-    lectureTitle: string
-  ): Promise<void> {
-    const conceptsFolder = normalizePath(
-      `${this.basePath}/${sanitizeFilename(subject)}/Concepts`
-    );
-    await this.ensureFolder(conceptsFolder);
-
-    const wikilinkRegex = /\[\[([^\]|#\n]+?)(?:\|[^\]]+)?\]\]/g;
-    const wikilinks = new Set<string>();
-    let match: RegExpExecArray | null;
-    while ((match = wikilinkRegex.exec(content)) !== null) {
-      const name = match[1].trim();
-      if (name && name !== lectureTitle) wikilinks.add(name);
-    }
-
-    for (const name of wikilinks) {
-      const filename = sanitizeFilename(name);
-      const filePath = normalizePath(`${conceptsFolder}/${filename}.md`);
-      if (!this.app.vault.getAbstractFileByPath(filePath)) {
-        const stubContent = [
-          "---",
-          `tags: [concept]`,
-          "---",
-          "",
-          `# ${name}`,
-          "",
-          `**관련 강의:** [[${lectureTitle}]]`,
-          "",
-        ].join("\n");
-        await this.app.vault.create(filePath, stubContent);
-      }
-    }
-  }
-
   private buildConceptNoteContent(concept: ConceptNote): string {
     const related = concept.relatedConcepts
       .map((c) => `[[${c}]]`)
@@ -232,10 +223,69 @@ export class VaultManager {
     lectureTitle: string
   ): string {
     const ref = `[[${lectureTitle}]]`;
+    if (content.includes(ref)) return content;
+
     const marker = "**관련 강의:**";
-    if (content.includes(marker)) {
-      return content.replace(marker, `${marker} ${ref},`);
+    const existingLine = content.match(/^(\*\*관련 강의:\*\*\s*)(.*)$/m);
+    if (existingLine) {
+      const currentRefs = existingLine[2].trim();
+      const nextRefs = currentRefs ? `${currentRefs}, ${ref}` : ref;
+      return content.replace(existingLine[0], `${marker} ${nextRefs}`);
     }
     return content + `\n**관련 강의:** ${ref}\n`;
+  }
+
+  private mergeManagedNote(currentContent: string, nextContent: string): string {
+    const nextParts = this.splitManagedNote(nextContent);
+    const currentParts = this.splitManagedNote(currentContent);
+
+    if (currentParts.managed) {
+      return [
+        nextParts.frontmatter,
+        currentParts.before.trim(),
+        nextParts.managed,
+        currentParts.after.trim(),
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+        .trimEnd() + "\n";
+    }
+
+    return [
+      nextContent.trimEnd(),
+      "",
+      "## 이전 노트 백업",
+      "",
+      "> [!note]",
+      "> 이 내용은 Alt2Obsidian 관리 구간이 도입되기 전의 기존 노트입니다.",
+      "",
+      currentContent.trim(),
+      "",
+    ].join("\n");
+  }
+
+  private splitManagedNote(content: string): {
+    frontmatter: string;
+    before: string;
+    managed: string;
+    after: string;
+  } {
+    const frontmatterMatch = content.match(/^---\n[\s\S]*?\n---\n*/);
+    const frontmatter = frontmatterMatch ? frontmatterMatch[0].trimEnd() : "";
+    const contentStart = frontmatterMatch ? frontmatterMatch[0].length : 0;
+    const start = content.indexOf(MANAGED_NOTE_START);
+    const end = content.indexOf(MANAGED_NOTE_END);
+
+    if (start === -1 || end === -1 || end < start) {
+      return { frontmatter, before: "", managed: "", after: "" };
+    }
+
+    const managedEnd = end + MANAGED_NOTE_END.length;
+    return {
+      frontmatter,
+      before: content.slice(contentStart, start),
+      managed: content.slice(start, managedEnd).trimEnd(),
+      after: content.slice(managedEnd),
+    };
   }
 }
